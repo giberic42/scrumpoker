@@ -19,11 +19,13 @@ import {
 import { firebaseConfig } from "./firebase-config.js";
 
 const POINT_OPTIONS = ["0", "1", "2", "3", "5", "8", "13", "21"];
+const POINT_VALUES = POINT_OPTIONS.map((value) => Number(value));
 const PLACEHOLDER_VALUES = new Set([
   "REPLACE_ME",
   "REPLACE_ME.firebaseapp.com",
   "REPLACE_ME.appspot.com"
 ]);
+const THEME_STORAGE_KEY = "scrum-poker-theme";
 
 const refs = {
   authStatus: document.getElementById("authStatus"),
@@ -31,6 +33,7 @@ const refs = {
   voteCount: document.getElementById("voteCount"),
   revealState: document.getElementById("revealState"),
   averageValue: document.getElementById("averageValue"),
+  themeToggleBtn: document.getElementById("themeToggleBtn"),
   message: document.getElementById("message"),
   setupSection: document.getElementById("setupSection"),
   boardSection: document.getElementById("boardSection"),
@@ -40,15 +43,11 @@ const refs = {
   voteDeck: document.getElementById("voteDeck"),
   participantsTableBody: document.getElementById("participantsTableBody"),
   emptyState: document.getElementById("emptyState"),
-  createName: document.getElementById("createName"),
-  createRoomId: document.getElementById("createRoomId"),
-  createPassphrase: document.getElementById("createPassphrase"),
-  createRoomBtn: document.getElementById("createRoomBtn"),
+  displayName: document.getElementById("displayName"),
+  roomIdInput: document.getElementById("roomIdInput"),
+  passphraseInput: document.getElementById("passphraseInput"),
+  enterRoomBtn: document.getElementById("enterRoomBtn"),
   prefillFromLinkBtn: document.getElementById("prefillFromLinkBtn"),
-  joinName: document.getElementById("joinName"),
-  joinRoomId: document.getElementById("joinRoomId"),
-  joinPassphrase: document.getElementById("joinPassphrase"),
-  joinRoomBtn: document.getElementById("joinRoomBtn"),
   copyLinkBtn: document.getElementById("copyLinkBtn"),
   toggleRevealBtn: document.getElementById("toggleRevealBtn"),
   clearVotesBtn: document.getElementById("clearVotesBtn"),
@@ -74,26 +73,19 @@ bindUi();
 bootstrap();
 
 function bindUi() {
-  refs.createRoomBtn.addEventListener("click", () => createRoom());
-  refs.joinRoomBtn.addEventListener("click", () => joinRoom());
+  applySavedTheme();
+  refs.enterRoomBtn.addEventListener("click", () => enterOrCreateRoom());
   refs.prefillFromLinkBtn.addEventListener("click", () => prefillRoomIdFromUrl(true));
   refs.copyLinkBtn.addEventListener("click", () => copyInviteLink());
   refs.toggleRevealBtn.addEventListener("click", () => toggleReveal());
   refs.clearVotesBtn.addEventListener("click", () => clearVotes());
   refs.leaveRoomBtn.addEventListener("click", () => leaveRoom());
+  refs.themeToggleBtn.addEventListener("click", () => toggleTheme());
 
-  [refs.createName, refs.createRoomId, refs.createPassphrase].forEach((input) => {
+  [refs.displayName, refs.roomIdInput, refs.passphraseInput].forEach((input) => {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
-        createRoom();
-      }
-    });
-  });
-
-  [refs.joinName, refs.joinRoomId, refs.joinPassphrase].forEach((input) => {
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        joinRoom();
+        enterOrCreateRoom();
       }
     });
   });
@@ -138,17 +130,31 @@ function isFirebaseConfigured() {
 
 function prefillRoomIdFromUrl(showFeedback) {
   const roomFromUrl = new URLSearchParams(window.location.search).get("room");
-  if (!roomFromUrl) {
+  const inviteData = parseInviteHash();
+
+  if (!roomFromUrl && !inviteData.roomId) {
     if (showFeedback) {
-      showMessage("No room ID was found in the current link.", "error");
+      showMessage("No room details were found in the current link.", "error");
     }
     return;
   }
 
-  refs.createRoomId.value = roomFromUrl;
-  refs.joinRoomId.value = roomFromUrl;
+  const roomId = normalizeRoomId(inviteData.roomId || roomFromUrl || "");
+  if (roomId) {
+    refs.roomIdInput.value = roomId;
+  }
+
+  if (inviteData.passphrase) {
+    refs.passphraseInput.value = inviteData.passphrase;
+  }
+
   if (showFeedback) {
-    showMessage(`Loaded room ID "${roomFromUrl}" from the link.`, "success");
+    showMessage(
+      inviteData.passphrase
+        ? `Loaded room "${roomId}" and its invite passphrase from the link.`
+        : `Loaded room ID "${roomId}" from the link.`,
+      "success"
+    );
   }
 }
 
@@ -166,62 +172,14 @@ async function ensureReady() {
   return true;
 }
 
-async function createRoom() {
+async function enterOrCreateRoom() {
   if (!(await ensureReady()) || state.busy) {
     return;
   }
 
-  const name = normalizeName(refs.createName.value);
-  const roomId = normalizeRoomId(refs.createRoomId.value);
-  const passphrase = normalizePassphrase(refs.createPassphrase.value);
-
-  if (!validateRoomInputs({ name, roomId, passphrase })) {
-    return;
-  }
-
-  state.busy = true;
-  toggleBusyState();
-
-  try {
-    const roomKey = await deriveRoomKey(roomId, passphrase);
-    const roomRef = doc(db, "rooms", roomKey);
-    const roomSnapshot = await getDoc(roomRef);
-
-    if (roomSnapshot.exists()) {
-      showMessage("That room already exists. Join it instead or choose a different room ID.", "error");
-      return;
-    }
-
-    const now = Date.now();
-    await setDoc(roomRef, {
-      roomId,
-      revealVotes: false,
-      hostUid: state.user.uid,
-      createdAt: now,
-      updatedAt: now
-    });
-
-    await upsertParticipant(roomKey, name);
-    await enterRoom(roomId, roomKey, name);
-    refs.createPassphrase.value = "";
-    showMessage(`Room "${roomId}" is live. Share the link and passphrase with your team.`, "success");
-  } catch (error) {
-    console.error(error);
-    showMessage(`Could not create room: ${error.message}`, "error");
-  } finally {
-    state.busy = false;
-    toggleBusyState();
-  }
-}
-
-async function joinRoom() {
-  if (!(await ensureReady()) || state.busy) {
-    return;
-  }
-
-  const name = normalizeName(refs.joinName.value);
-  const roomId = normalizeRoomId(refs.joinRoomId.value);
-  const passphrase = normalizePassphrase(refs.joinPassphrase.value);
+  const name = normalizeName(refs.displayName.value);
+  const roomId = normalizeRoomId(refs.roomIdInput.value);
+  const passphrase = normalizePassphrase(refs.passphraseInput.value);
 
   if (!validateRoomInputs({ name, roomId, passphrase })) {
     return;
@@ -236,17 +194,30 @@ async function joinRoom() {
     const roomSnapshot = await getDoc(roomRef);
 
     if (!roomSnapshot.exists()) {
-      showMessage("Room not found. Double-check the room ID and passphrase.", "error");
-      return;
+      const now = Date.now();
+      await setDoc(roomRef, {
+        roomId,
+        revealVotes: false,
+        hostUid: state.user.uid,
+        createdAt: now,
+        updatedAt: now
+      });
     }
 
     await upsertParticipant(roomKey, name);
     await enterRoom(roomId, roomKey, name);
-    refs.joinPassphrase.value = "";
-    showMessage(`Joined room "${roomId}".`, "success");
+    showMessage(
+      roomSnapshot.exists()
+        ? `Joined room "${roomId}".`
+        : `Created room "${roomId}" and joined as host.`,
+      "success"
+    );
   } catch (error) {
     console.error(error);
-    showMessage(`Could not join room: ${error.message}`, "error");
+    showMessage(
+      `Could not enter room. Double-check the room ID and passphrase. ${error.message}`,
+      "error"
+    );
   } finally {
     state.busy = false;
     toggleBusyState();
@@ -280,10 +251,8 @@ async function enterRoom(roomId, roomKey, participantName) {
   state.participants = [];
   state.roomData = null;
 
-  refs.createName.value = participantName;
-  refs.joinName.value = participantName;
-  refs.createRoomId.value = roomId;
-  refs.joinRoomId.value = roomId;
+  refs.displayName.value = participantName;
+  refs.roomIdInput.value = roomId;
 
   const roomRef = doc(db, "rooms", roomKey);
   const participantsRef = collection(roomRef, "participants");
@@ -318,7 +287,7 @@ async function enterRoom(roomId, roomKey, participantName) {
 
   refs.setupSection.style.display = "none";
   refs.boardSection.classList.add("show");
-  setRoomUrl(roomId);
+  setInviteUrl(roomId, refs.passphraseInput.value);
 }
 
 async function upsertParticipant(roomKey, name) {
@@ -448,7 +417,7 @@ async function leaveRoom(showFeedback = true) {
   refs.boardSection.classList.remove("show");
   refs.setupSection.style.display = "grid";
   resetStats();
-  setRoomUrl("");
+  clearInviteUrl();
   render();
 
   if (currentUid && currentRoomKey) {
@@ -553,7 +522,7 @@ function render() {
   refs.participantCount.textContent = String(participants.length);
   refs.voteCount.textContent = String(participants.filter((participant) => participant.vote !== null && participant.vote !== "").length);
   refs.revealState.textContent = revealVotes ? "Shown" : "Hidden";
-  refs.averageValue.textContent = formatAverage(numericVotes);
+  refs.averageValue.textContent = revealVotes ? formatAverage(numericVotes) : "Hidden";
   refs.toggleRevealBtn.textContent = revealVotes ? "Hide Votes" : "Show Votes";
   refs.toggleRevealBtn.disabled = !canManageRoom();
   refs.clearVotesBtn.disabled = !canManageRoom();
@@ -602,10 +571,23 @@ function resetStats() {
   refs.toggleRevealBtn.textContent = "Show Votes";
 }
 
+function applySavedTheme() {
+  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+  const theme = savedTheme === "dark" ? "dark" : "light";
+  document.body.dataset.theme = theme;
+  refs.themeToggleBtn.textContent = theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode";
+}
+
+function toggleTheme() {
+  const nextTheme = document.body.dataset.theme === "dark" ? "light" : "dark";
+  document.body.dataset.theme = nextTheme;
+  localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  refs.themeToggleBtn.textContent = nextTheme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode";
+}
+
 function toggleBusyState() {
   const disabled = state.busy;
-  refs.createRoomBtn.disabled = disabled;
-  refs.joinRoomBtn.disabled = disabled;
+  refs.enterRoomBtn.disabled = disabled;
 }
 
 function normalizeName(value) {
@@ -633,7 +615,25 @@ function formatAverage(votes) {
   }
 
   const average = votes.reduce((sum, vote) => sum + vote, 0) / votes.length;
-  return Number.isInteger(average) ? String(average) : average.toFixed(1);
+  return String(findClosestStoryPoint(average));
+}
+
+function findClosestStoryPoint(target) {
+  return POINT_VALUES.reduce((closest, candidate) => {
+    const candidateDistance = Math.abs(candidate - target);
+    const closestDistance = Math.abs(closest - target);
+
+    if (candidateDistance < closestDistance) {
+      return candidate;
+    }
+
+    // If the mean falls directly between two cards, bias upward.
+    if (candidateDistance === closestDistance && candidate > closest) {
+      return candidate;
+    }
+
+    return closest;
+  }, POINT_VALUES[0]);
 }
 
 async function deriveRoomKey(roomId, passphrase) {
@@ -644,20 +644,45 @@ async function deriveRoomKey(roomId, passphrase) {
   return hashArray.map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function setRoomUrl(roomId) {
+function setInviteUrl(roomId, passphrase) {
   const url = new URL(window.location.href);
-  if (roomId) {
-    url.searchParams.set("room", roomId);
-  } else {
-    url.searchParams.delete("room");
-  }
+  url.searchParams.delete("room");
+  url.hash = roomId
+    ? new URLSearchParams({
+        room: roomId,
+        passphrase
+      }).toString()
+    : "";
   window.history.replaceState({}, "", url);
 }
 
 function buildInviteUrl(roomId) {
   const url = new URL(window.location.href);
-  url.searchParams.set("room", roomId);
+  url.searchParams.delete("room");
+  url.hash = new URLSearchParams({
+    room: roomId,
+    passphrase: refs.passphraseInput.value
+  }).toString();
   return url.toString();
+}
+
+function clearInviteUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("room");
+  url.hash = "";
+  window.history.replaceState({}, "", url);
+}
+
+function parseInviteHash() {
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  const params = new URLSearchParams(hash);
+
+  return {
+    roomId: params.get("room") ?? "",
+    passphrase: params.get("passphrase") ?? ""
+  };
 }
 
 async function copyInviteLink() {
@@ -668,7 +693,7 @@ async function copyInviteLink() {
 
   try {
     await navigator.clipboard.writeText(buildInviteUrl(state.roomId));
-    showMessage("Invite link copied. Send the passphrase separately.", "success");
+    showMessage("Invite link copied. It includes the room ID and passphrase in the link hash.", "success");
   } catch (error) {
     console.error(error);
     showMessage("Could not copy the invite link in this browser.", "error");

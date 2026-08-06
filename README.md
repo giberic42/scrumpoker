@@ -64,6 +64,19 @@ If you want stronger room security later, the next step is a small backend or Cl
 - The passphrase should be shared separately from the room link.
 - The room host is the person who creates the room. The host controls reveal and vote reset.
 
+## Local testing
+
+If your browser shows a module MIME-type error when using `python -m http.server`, use the included local server instead:
+
+```powershell
+cd C:\Users\Eric\Documents\scrum
+python serve.py
+```
+
+Then open:
+
+- `http://127.0.0.1:8000`
+
 ## Optional Firebase Hosting
 
 If you later decide you would rather host the app on Firebase instead of GitHub Pages, Firebase Hosting officially supports static assets and the `firebase init hosting` flow.
