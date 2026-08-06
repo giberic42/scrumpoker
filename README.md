@@ -15,7 +15,8 @@ Static scrum poker app for GitHub Pages with Firebase Auth and Cloud Firestore f
 
 - `index.html`: app shell and styles
 - `app.js`: Firebase-powered room logic
-- `firebase-config.js`: your Firebase web app config
+- `firebase-config.js`: your local Firebase web app config, kept out of git
+- `firebase-config.example.js`: template for the Firebase web app config
 - `firestore.rules`: starter Firestore rules
 
 ## Firebase setup
@@ -25,8 +26,9 @@ Static scrum poker app for GitHub Pages with Firebase Auth and Cloud Firestore f
 3. Enable `Authentication`.
 4. In `Authentication > Sign-in method`, enable `Anonymous`.
 5. Create a `Cloud Firestore` database.
-6. Replace the placeholder values in `firebase-config.js` with your real web app config.
-7. In `Authentication > Settings > Authorized domains`, add your GitHub Pages domain, for example `yourname.github.io`.
+6. Copy `firebase-config.example.js` to `firebase-config.js`.
+7. Replace the placeholder values in `firebase-config.js` with your real web app config.
+8. In `Authentication > Settings > Authorized domains`, add your GitHub Pages domain, for example `yourname.github.io`.
 
 ## Firestore rules
 
@@ -39,10 +41,18 @@ If you want stronger room security later, the next step is a small backend or Cl
 ## Deploy to GitHub Pages
 
 1. Push these files to a GitHub repository.
-2. In GitHub, open `Settings > Pages`.
-3. Set the source to deploy from your default branch and the folder containing `index.html`.
-4. Wait for GitHub Pages to publish the site.
-5. Open the published URL and test:
+2. In GitHub, open `Settings > Secrets and variables > Actions` and add:
+   - `FIREBASE_API_KEY`
+   - `FIREBASE_AUTH_DOMAIN`
+   - `FIREBASE_PROJECT_ID`
+   - `FIREBASE_STORAGE_BUCKET`
+   - `FIREBASE_MESSAGING_SENDER_ID`
+   - `FIREBASE_APP_ID`
+3. In GitHub, open `Settings > Pages`.
+4. Set the source to `GitHub Actions`.
+5. Push to `main` or run the `Deploy GitHub Pages` workflow manually.
+6. Wait for GitHub Pages to publish the site.
+7. Open the published URL and test:
    - create a room
    - copy the invite link
    - open a second browser or private window
@@ -50,7 +60,7 @@ If you want stronger room security later, the next step is a small backend or Cl
 
 ## Notes
 
-- Firebase web config values are safe to ship in the frontend. They identify your project; they are not secret keys.
+- Firebase web config values are intended for client-side apps, but storing them in GitHub Actions secrets keeps them out of the source repository and avoids GitHub secret-scanning alerts.
 - The passphrase should be shared separately from the room link.
 - The room host is the person who creates the room. The host controls reveal and vote reset.
 
