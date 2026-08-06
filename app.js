@@ -22,6 +22,7 @@ const POINT_OPTIONS = ["0", "1", "2", "3", "5", "8", "13", "21"];
 const POINT_VALUES = POINT_OPTIONS.map((value) => Number(value));
 const HEARTBEAT_INTERVAL_MS = 30000;
 const STALE_TIMEOUT_MS = 90000;
+const CLEAR_ANIMATION_MS = 720;
 const PLACEHOLDER_VALUES = new Set([
   "REPLACE_ME",
   "REPLACE_ME.firebaseapp.com",
@@ -42,6 +43,7 @@ const refs = {
   roomIdLabel: document.getElementById("roomIdLabel"),
   roomSummary: document.getElementById("roomSummary"),
   hostState: document.getElementById("hostState"),
+  clearOverlay: document.getElementById("clearOverlay"),
   voteDeck: document.getElementById("voteDeck"),
   participantsTableBody: document.getElementById("participantsTableBody"),
   emptyState: document.getElementById("emptyState"),
@@ -361,6 +363,12 @@ async function clearVotes() {
   }
 
   try {
+    refs.clearOverlay.classList.remove("active");
+    refs.boardSection.querySelector(".board")?.classList.add("clearing");
+    void refs.clearOverlay.offsetWidth;
+    refs.clearOverlay.classList.add("active");
+    await delay(CLEAR_ANIMATION_MS);
+
     const batch = writeBatch(db);
     const now = Date.now();
 
@@ -388,6 +396,9 @@ async function clearVotes() {
   } catch (error) {
     console.error(error);
     showMessage(`Could not clear votes: ${error.message}`, "error");
+  } finally {
+    refs.boardSection.querySelector(".board")?.classList.remove("clearing");
+    refs.clearOverlay.classList.remove("active");
   }
 }
 
@@ -754,6 +765,10 @@ function normalizeRoomId(value) {
 
 function normalizePassphrase(value) {
   return value.trim();
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function formatAverage(votes) {

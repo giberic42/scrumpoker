@@ -339,17 +339,22 @@
     }
 
     .toolbar {
-      display: flex;
-      justify-content: space-between;
+      display: grid;
       gap: 14px;
-      align-items: center;
-      flex-wrap: wrap;
       margin-bottom: 18px;
     }
 
     .toolbar-title {
       display: grid;
       gap: 6px;
+    }
+
+    .toolbar-topline {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
     }
 
     .toolbar-title h2 {
@@ -360,6 +365,13 @@
     .toolbar-subtitle {
       color: var(--muted);
       font-size: 0.88rem;
+    }
+
+    .toolbar-actions-row {
+      display: flex;
+      justify-content: flex-start;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .room-chip {
@@ -375,6 +387,102 @@
 
     .board {
       padding: 22px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .clear-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 5;
+      background: radial-gradient(circle at center, rgba(255, 255, 255, 0.12), transparent 58%);
+    }
+
+    .clear-overlay.active {
+      animation: overlay-flash 980ms ease-out forwards;
+    }
+
+    .bomb-burst {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) scale(0.14);
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, rgba(255, 255, 255, 1) 0 10%, rgba(255, 245, 183, 0.98) 11% 20%, rgba(255, 187, 64, 0.98) 21% 34%, rgba(255, 111, 0, 0.95) 35% 48%, rgba(228, 48, 32, 0.88) 49% 64%, transparent 65%);
+      filter: blur(2px);
+      opacity: 0;
+      box-shadow: 0 0 42px rgba(255, 111, 0, 0.28);
+    }
+
+    .clear-overlay.active .bomb-burst {
+      animation: bomb-pop 980ms cubic-bezier(0.16, 0.84, 0.22, 1) forwards;
+    }
+
+    .spark {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 12px;
+      height: 88px;
+      margin-left: -6px;
+      margin-top: -44px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #fff, #ffe48a 18%, #ff9f1a 48%, #ff5a1f 76%, transparent);
+      opacity: 0;
+      transform-origin: center 44px;
+      box-shadow: 0 0 18px rgba(255, 136, 0, 0.42);
+    }
+
+    .clear-overlay.active .spark {
+      animation: spark-burst 980ms ease-out forwards;
+    }
+
+    .spark.s1 { transform: rotate(0deg) translateY(-88px); }
+    .spark.s2 { transform: rotate(45deg) translateY(-88px); }
+    .spark.s3 { transform: rotate(90deg) translateY(-88px); }
+    .spark.s4 { transform: rotate(135deg) translateY(-88px); }
+    .spark.s5 { transform: rotate(180deg) translateY(-88px); }
+    .spark.s6 { transform: rotate(225deg) translateY(-88px); }
+    .spark.s7 { transform: rotate(270deg) translateY(-88px); }
+    .spark.s8 { transform: rotate(315deg) translateY(-88px); }
+
+    .board.clearing .story-pill,
+    .board.clearing .vote-card.selected {
+      animation: vote-wipe 980ms cubic-bezier(0.2, 0.8, 0.18, 1) forwards;
+    }
+
+    @keyframes overlay-flash {
+      0% { opacity: 0; }
+      8% { opacity: 0.95; }
+      24% { opacity: 0.72; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes bomb-pop {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(0.14); }
+      16% { opacity: 1; transform: translate(-50%, -50%) scale(0.9); }
+      38% { opacity: 1; transform: translate(-50%, -50%) scale(1.8); }
+      72% { opacity: 0.92; transform: translate(-50%, -50%) scale(3.2); }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(4.2); }
+    }
+
+    @keyframes spark-burst {
+      0% { opacity: 0; }
+      12% { opacity: 1; }
+      42% { opacity: 1; }
+      100% { opacity: 0; transform: scaleY(0.22) translateY(-210px); }
+    }
+
+    @keyframes vote-wipe {
+      0% { transform: scale(1); opacity: 1; filter: brightness(1); }
+      18% { transform: scale(1.18) rotate(-4deg); opacity: 1; filter: brightness(1.45); }
+      52% { transform: scale(0.9) rotate(6deg); opacity: 0.94; filter: brightness(1.2); }
+      100% { transform: scale(0.24) rotate(14deg) translateY(-18px); opacity: 0; filter: brightness(2); }
     }
 
     .vote-panel,
@@ -655,7 +763,7 @@
         align-items: stretch;
       }
 
-      .board-actions button,
+      .toolbar-actions-row button,
       .inline-actions button {
         flex: 1 1 0;
       }
@@ -742,23 +850,35 @@
 
     <section id="boardSection" class="board-shell">
       <div class="card board">
+        <div id="clearOverlay" class="clear-overlay" aria-hidden="true">
+          <div class="bomb-burst"></div>
+          <div class="spark s1"></div>
+          <div class="spark s2"></div>
+          <div class="spark s3"></div>
+          <div class="spark s4"></div>
+          <div class="spark s5"></div>
+          <div class="spark s6"></div>
+          <div class="spark s7"></div>
+          <div class="spark s8"></div>
+        </div>
         <div class="toolbar">
           <div class="toolbar-title">
-            <div class="room-meta">
-              <div class="room-chip">Room <span id="roomIdLabel">-</span></div>
-              <div class="status-pill" id="hostState">Participant View</div>
+            <div class="toolbar-topline">
+              <div class="room-meta">
+                <div class="room-chip">Room <span id="roomIdLabel">-</span></div>
+                <div class="status-pill" id="hostState">Participant View</div>
+              </div>
+              <button id="leaveRoomBtn" class="danger-btn" type="button">Leave Room</button>
             </div>
             <div class="toolbar-subtitle" id="roomSummary">
               Hidden voting until reveal.
             </div>
           </div>
-
-          <div class="board-actions">
+          <div class="toolbar-actions-row">
             <button id="copyLinkBtn" class="secondary-btn" type="button">Copy Invite Link</button>
             <button id="passHostBtn" class="secondary-btn" type="button">Pass Host</button>
             <button id="toggleRevealBtn" class="primary-btn" type="button">Show Votes</button>
             <button id="clearVotesBtn" class="secondary-btn" type="button">Delete Votes</button>
-            <button id="leaveRoomBtn" class="danger-btn" type="button">Leave Room</button>
           </div>
         </div>
 
