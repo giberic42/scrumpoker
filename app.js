@@ -20,6 +20,8 @@ import { firebaseConfig } from "./firebase-config.js";
 
 const POINT_OPTIONS = ["0", "1", "2", "3", "5", "8", "13", "21"];
 const POINT_VALUES = POINT_OPTIONS.map((value) => Number(value));
+const HEARTBEAT_INTERVAL_MS = 30000;
+const STALE_TIMEOUT_MS = 90000;
 const PLACEHOLDER_VALUES = new Set([
   "REPLACE_ME",
   "REPLACE_ME.firebaseapp.com",
@@ -49,6 +51,7 @@ const refs = {
   enterRoomBtn: document.getElementById("enterRoomBtn"),
   prefillFromLinkBtn: document.getElementById("prefillFromLinkBtn"),
   copyLinkBtn: document.getElementById("copyLinkBtn"),
+  passHostBtn: document.getElementById("passHostBtn"),
   toggleRevealBtn: document.getElementById("toggleRevealBtn"),
   clearVotesBtn: document.getElementById("clearVotesBtn"),
   leaveRoomBtn: document.getElementById("leaveRoomBtn")
@@ -63,7 +66,9 @@ const state = {
   roomData: null,
   participants: [],
   unsubscribers: [],
-  busy: false
+  busy: false,
+  heartbeatIntervalId: null,
+  staleCleanupIntervalId: null
 };
 
 let db = null;
@@ -77,6 +82,7 @@ function bindUi() {
   refs.enterRoomBtn.addEventListener("click", () => enterOrCreateRoom());
   refs.prefillFromLinkBtn.addEventListener("click", () => prefillRoomIdFromUrl(true));
   refs.copyLinkBtn.addEventListener("click", () => copyInviteLink());
+  refs.passHostBtn.addEventListener("click", () => passHostToNextParticipant());
   refs.toggleRevealBtn.addEventListener("click", () => toggleReveal());
   refs.clearVotesBtn.addEventListener("click", () => clearVotes());
   refs.leaveRoomBtn.addEventListener("click", () => leaveRoom());
@@ -288,6 +294,7 @@ async function enterRoom(roomId, roomKey, participantName) {
   refs.setupSection.style.display = "none";
   refs.boardSection.classList.add("show");
   setInviteUrl(roomId, refs.passphraseInput.value);
+  startPresenceLoops();
 }
 
 async function upsertParticipant(roomKey, name) {
@@ -302,6 +309,7 @@ async function upsertParticipant(roomKey, name) {
       name,
       vote: existing.exists() ? existing.data().vote ?? null : null,
       joinedAt: existing.exists() ? existing.data().joinedAt ?? now : now,
+      lastSeenAt: now,
       updatedAt: now
     },
     { merge: true }
@@ -395,7 +403,7 @@ async function removeParticipant(participantId) {
   }
 
   try {
-    await deleteDoc(doc(db, "rooms", state.roomKey, "participants", participantId));
+    await removeParticipantInternal(participantId);
   } catch (error) {
     console.error(error);
     showMessage(`Could not remove participant: ${error.message}`, "error");
@@ -406,8 +414,11 @@ async function leaveRoom(showFeedback = true) {
   const previousRoomId = state.roomId;
   const currentUid = state.user?.uid;
   const currentRoomKey = state.roomKey;
+  const shouldTransferHost = currentUid && state.roomData?.hostUid === currentUid;
+  const nextHostUid = shouldTransferHost ? getNextHostCandidate([currentUid]) : null;
 
   cleanupSubscriptions();
+  stopPresenceLoops();
 
   state.roomId = "";
   state.roomKey = "";
@@ -422,6 +433,12 @@ async function leaveRoom(showFeedback = true) {
 
   if (currentUid && currentRoomKey) {
     try {
+      if (shouldTransferHost && nextHostUid) {
+        await updateDoc(doc(db, "rooms", currentRoomKey), {
+          hostUid: nextHostUid,
+          updatedAt: Date.now()
+        });
+      }
       await deleteDoc(doc(db, "rooms", currentRoomKey, "participants", currentUid));
     } catch (error) {
       console.error(error);
@@ -438,8 +455,129 @@ function cleanupSubscriptions() {
   state.unsubscribers = [];
 }
 
+function stopPresenceLoops() {
+  if (state.heartbeatIntervalId) {
+    clearInterval(state.heartbeatIntervalId);
+    state.heartbeatIntervalId = null;
+  }
+
+  if (state.staleCleanupIntervalId) {
+    clearInterval(state.staleCleanupIntervalId);
+    state.staleCleanupIntervalId = null;
+  }
+}
+
+function startPresenceLoops() {
+  stopPresenceLoops();
+  void touchPresence();
+  state.heartbeatIntervalId = window.setInterval(() => {
+    void touchPresence();
+  }, HEARTBEAT_INTERVAL_MS);
+  state.staleCleanupIntervalId = window.setInterval(() => {
+    void cleanupStaleParticipants();
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+async function touchPresence() {
+  if (!state.roomKey || !state.user) {
+    return;
+  }
+
+  try {
+    await setDoc(
+      doc(db, "rooms", state.roomKey, "participants", state.user.uid),
+      {
+        lastSeenAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      { merge: true }
+    );
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function cleanupStaleParticipants() {
+  if (!canManageRoom() || !state.participants.length) {
+    return;
+  }
+
+  const staleParticipants = state.participants.filter((participant) => {
+    if (participant.id === state.user?.uid) {
+      return false;
+    }
+
+    const lastSeenAt = Number(participant.lastSeenAt || 0);
+    return lastSeenAt > 0 && Date.now() - lastSeenAt > STALE_TIMEOUT_MS;
+  });
+
+  if (!staleParticipants.length) {
+    return;
+  }
+
+  for (const participant of staleParticipants) {
+    await removeParticipantInternal(participant.id, { silent: true, stale: true });
+  }
+}
+
 function canManageRoom() {
   return Boolean(state.user && state.roomData && state.roomData.hostUid === state.user.uid);
+}
+
+function getNextHostCandidate(excludedIds = []) {
+  const excluded = new Set(excludedIds);
+  return (
+    state.participants.find((participant) => !excluded.has(participant.id))?.id ??
+    null
+  );
+}
+
+async function passHostToNextParticipant() {
+  if (!canManageRoom()) {
+    showMessage("Only the host can pass host controls.", "error");
+    return;
+  }
+
+  const nextHostUid = getNextHostCandidate([state.user.uid]);
+  if (!nextHostUid) {
+    showMessage("No other participant is available for host transfer.", "error");
+    return;
+  }
+
+  try {
+    await updateDoc(doc(db, "rooms", state.roomKey), {
+      hostUid: nextHostUid,
+      updatedAt: Date.now()
+    });
+    showMessage("Host controls passed to the next participant.", "success");
+  } catch (error) {
+    console.error(error);
+    showMessage(`Could not pass host controls: ${error.message}`, "error");
+  }
+}
+
+async function removeParticipantInternal(participantId, options = {}) {
+  const participant = state.participants.find((entry) => entry.id === participantId);
+  const isRemovingHost = participantId === state.roomData?.hostUid;
+  const nextHostUid = isRemovingHost ? getNextHostCandidate([participantId]) : null;
+
+  if (isRemovingHost && nextHostUid) {
+    await updateDoc(doc(db, "rooms", state.roomKey), {
+      hostUid: nextHostUid,
+      updatedAt: Date.now()
+    });
+  }
+
+  await deleteDoc(doc(db, "rooms", state.roomKey, "participants", participantId));
+
+  if (!options.silent && participant) {
+    showMessage(
+      options.stale
+        ? `${participant.name} was removed after going inactive.`
+        : `${participant.name} was removed from the room.`,
+      "success"
+    );
+  }
 }
 
 function render() {
@@ -501,6 +639,13 @@ function render() {
 
     const controls = row.querySelector(".table-actions");
     if (isSelf) {
+      const renameBtn = document.createElement("button");
+      renameBtn.type = "button";
+      renameBtn.className = "mini-btn";
+      renameBtn.textContent = "Rename";
+      renameBtn.addEventListener("click", () => renameCurrentParticipant(participant.name || ""));
+      controls.appendChild(renameBtn);
+
       const removeSelfBtn = document.createElement("button");
       removeSelfBtn.type = "button";
       removeSelfBtn.className = "mini-btn";
@@ -526,6 +671,7 @@ function render() {
   refs.toggleRevealBtn.textContent = revealVotes ? "Hide Votes" : "Show Votes";
   refs.toggleRevealBtn.disabled = !canManageRoom();
   refs.clearVotesBtn.disabled = !canManageRoom();
+  refs.passHostBtn.disabled = !canManageRoom() || participants.length < 2;
 }
 
 function renderVoteDeck(currentUser) {
@@ -568,6 +714,7 @@ function resetStats() {
   refs.averageValue.textContent = "-";
   refs.toggleRevealBtn.disabled = true;
   refs.clearVotesBtn.disabled = true;
+  refs.passHostBtn.disabled = true;
   refs.toggleRevealBtn.textContent = "Show Votes";
 }
 
@@ -697,6 +844,33 @@ async function copyInviteLink() {
   } catch (error) {
     console.error(error);
     showMessage("Could not copy the invite link in this browser.", "error");
+  }
+}
+
+async function renameCurrentParticipant(currentName) {
+  if (!state.roomKey || !state.user) {
+    return;
+  }
+
+  const nextName = normalizeName(window.prompt("Update your display name", currentName) ?? "");
+  if (!nextName) {
+    return;
+  }
+
+  try {
+    await setDoc(
+      doc(db, "rooms", state.roomKey, "participants", state.user.uid),
+      {
+        name: nextName,
+        updatedAt: Date.now()
+      },
+      { merge: true }
+    );
+    refs.displayName.value = nextName;
+    showMessage("Name updated.", "success");
+  } catch (error) {
+    console.error(error);
+    showMessage(`Could not update your name: ${error.message}`, "error");
   }
 }
 
