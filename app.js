@@ -29,6 +29,7 @@ const PLACEHOLDER_VALUES = new Set([
   "REPLACE_ME.appspot.com"
 ]);
 const THEME_STORAGE_KEY = "scrum-poker-theme";
+const SESSION_STORAGE_KEY = "scrum-poker-session";
 
 const refs = {
   authStatus: document.getElementById("authStatus"),
@@ -69,6 +70,7 @@ const state = {
   participants: [],
   unsubscribers: [],
   busy: false,
+  resumeAttempted: false,
   heartbeatIntervalId: null,
   staleCleanupIntervalId: null
 };
@@ -124,6 +126,9 @@ async function bootstrap() {
       state.authReady = Boolean(user);
       refs.authStatus.textContent = user ? "Connected to Firebase" : "Waiting for auth";
       updateBoardHeader();
+      if (user) {
+        void resumePreviousSession();
+      }
     });
   } catch (error) {
     console.error(error);
@@ -214,6 +219,11 @@ async function enterOrCreateRoom() {
 
     await upsertParticipant(roomKey, name);
     await enterRoom(roomId, roomKey, name);
+    saveSession({
+      name,
+      roomId,
+      passphrase
+    });
     showMessage(
       roomSnapshot.exists()
         ? `Joined room "${roomId}".`
@@ -435,11 +445,13 @@ async function leaveRoom(showFeedback = true) {
   state.roomKey = "";
   state.roomData = null;
   state.participants = [];
+  state.resumeAttempted = true;
 
   refs.boardSection.classList.remove("show");
   refs.setupSection.style.display = "grid";
   resetStats();
   clearInviteUrl();
+  clearSavedSession();
   render();
 
   if (currentUid && currentRoomKey) {
@@ -736,11 +748,80 @@ function applySavedTheme() {
   refs.themeToggleBtn.textContent = theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode";
 }
 
+async function resumePreviousSession() {
+  if (state.resumeAttempted || state.roomKey || state.busy) {
+    return;
+  }
+
+  state.resumeAttempted = true;
+  const savedSession = getSavedSession();
+  const inviteData = parseInviteHash();
+
+  const roomId = normalizeRoomId(inviteData.roomId || savedSession.roomId || "");
+  const passphrase = normalizePassphrase(inviteData.passphrase || savedSession.passphrase || "");
+  const name = normalizeName(savedSession.name || refs.displayName.value || "");
+
+  if (!roomId || !passphrase || !name) {
+    return;
+  }
+
+  refs.displayName.value = name;
+  refs.roomIdInput.value = roomId;
+  refs.passphraseInput.value = passphrase;
+
+  try {
+    state.busy = true;
+    toggleBusyState();
+
+    const roomKey = await deriveRoomKey(roomId, passphrase);
+    const roomRef = doc(db, "rooms", roomKey);
+    const roomSnapshot = await getDoc(roomRef);
+
+    if (!roomSnapshot.exists()) {
+      clearSavedSession();
+      return;
+    }
+
+    await upsertParticipant(roomKey, name);
+    await enterRoom(roomId, roomKey, name);
+    saveSession({ name, roomId, passphrase });
+    showMessage(`Rejoined room "${roomId}".`, "success");
+  } catch (error) {
+    console.error(error);
+    clearSavedSession();
+    showMessage("Could not resume the previous room automatically.", "error");
+  } finally {
+    state.busy = false;
+    toggleBusyState();
+  }
+}
+
 function toggleTheme() {
   const nextTheme = document.body.dataset.theme === "dark" ? "light" : "dark";
   document.body.dataset.theme = nextTheme;
   localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
   refs.themeToggleBtn.textContent = nextTheme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode";
+}
+
+function saveSession(session) {
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
+function getSavedSession() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) || "{}");
+    return {
+      name: typeof parsed.name === "string" ? parsed.name : "",
+      roomId: typeof parsed.roomId === "string" ? parsed.roomId : "",
+      passphrase: typeof parsed.passphrase === "string" ? parsed.passphrase : ""
+    };
+  } catch {
+    return { name: "", roomId: "", passphrase: "" };
+  }
+}
+
+function clearSavedSession() {
+  localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
 function toggleBusyState() {
