@@ -19,7 +19,8 @@ import {
 import { firebaseConfig } from "./firebase-config.js";
 
 const POINT_CARDS = [
-  { id: "coffee", label: "☕", numericValue: 0 },
+  { id: "question", label: "?", numericValue: 0 },
+  { id: "coffee", label: "\u2615", numericValue: 0 },
   { id: "0", label: "0", numericValue: 0 },
   { id: "1", label: "1", numericValue: 1 },
   { id: "2", label: "2", numericValue: 2 },
@@ -27,10 +28,11 @@ const POINT_CARDS = [
   { id: "5", label: "5", numericValue: 5 },
   { id: "8", label: "8", numericValue: 8 },
   { id: "13", label: "13", numericValue: 13 },
-  { id: "21", label: "21", numericValue: 21 },
-  { id: "40", label: "40", numericValue: 40 }
+  { id: "20", label: "20", numericValue: 20 },
+  { id: "40", label: "40", numericValue: 40 },
+  { id: "100", label: "100", numericValue: 100 }
 ];
-const POINT_VALUES = [0, 1, 2, 3, 5, 8, 13, 21, 40];
+const POINT_VALUES = [0, 1, 2, 3, 5, 8, 13, 20, 40, 100];
 const HEARTBEAT_INTERVAL_MS = 30000;
 const STALE_TIMEOUT_MS = 90000;
 const CLEAR_ANIMATION_MS = 720;
