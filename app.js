@@ -18,8 +18,19 @@ import {
 
 import { firebaseConfig } from "./firebase-config.js";
 
-const POINT_OPTIONS = ["0", "1", "2", "3", "5", "8", "13", "21"];
-const POINT_VALUES = POINT_OPTIONS.map((value) => Number(value));
+const POINT_CARDS = [
+  { id: "coffee", label: "☕", numericValue: 0 },
+  { id: "0", label: "0", numericValue: 0 },
+  { id: "1", label: "1", numericValue: 1 },
+  { id: "2", label: "2", numericValue: 2 },
+  { id: "3", label: "3", numericValue: 3 },
+  { id: "5", label: "5", numericValue: 5 },
+  { id: "8", label: "8", numericValue: 8 },
+  { id: "13", label: "13", numericValue: 13 },
+  { id: "21", label: "21", numericValue: 21 },
+  { id: "40", label: "40", numericValue: 40 }
+];
+const POINT_VALUES = [0, 1, 2, 3, 5, 8, 13, 21, 40];
 const HEARTBEAT_INTERVAL_MS = 30000;
 const STALE_TIMEOUT_MS = 90000;
 const CLEAR_ANIMATION_MS = 720;
@@ -54,7 +65,6 @@ const refs = {
   enterRoomBtn: document.getElementById("enterRoomBtn"),
   prefillFromLinkBtn: document.getElementById("prefillFromLinkBtn"),
   copyLinkBtn: document.getElementById("copyLinkBtn"),
-  passHostBtn: document.getElementById("passHostBtn"),
   toggleRevealBtn: document.getElementById("toggleRevealBtn"),
   clearVotesBtn: document.getElementById("clearVotesBtn"),
   leaveRoomBtn: document.getElementById("leaveRoomBtn")
@@ -86,7 +96,6 @@ function bindUi() {
   refs.enterRoomBtn.addEventListener("click", () => enterOrCreateRoom());
   refs.prefillFromLinkBtn.addEventListener("click", () => prefillRoomIdFromUrl(true));
   refs.copyLinkBtn.addEventListener("click", () => copyInviteLink());
-  refs.passHostBtn.addEventListener("click", () => passHostToNextParticipant());
   refs.toggleRevealBtn.addEventListener("click", () => toggleReveal());
   refs.clearVotesBtn.addEventListener("click", () => clearVotes());
   refs.leaveRoomBtn.addEventListener("click", () => leaveRoom());
@@ -211,7 +220,6 @@ async function enterOrCreateRoom() {
       await setDoc(roomRef, {
         roomId,
         revealVotes: false,
-        hostUid: state.user.uid,
         createdAt: now,
         updatedAt: now
       });
@@ -227,7 +235,7 @@ async function enterOrCreateRoom() {
     showMessage(
       roomSnapshot.exists()
         ? `Joined room "${roomId}".`
-        : `Created room "${roomId}" and joined as host.`,
+        : `Created room "${roomId}".`,
       "success"
     );
   } catch (error) {
@@ -351,7 +359,7 @@ async function setVote(vote) {
 
 async function toggleReveal() {
   if (!canManageRoom()) {
-    showMessage("Only the room host can reveal or hide votes.", "error");
+    showMessage("Join the room before changing reveal state.", "error");
     return;
   }
 
@@ -368,7 +376,7 @@ async function toggleReveal() {
 
 async function clearVotes() {
   if (!canManageRoom()) {
-    showMessage("Only the room host can clear votes.", "error");
+    showMessage("Join the room before clearing votes.", "error");
     return;
   }
 
@@ -417,9 +425,8 @@ async function removeParticipant(participantId) {
     return;
   }
 
-  const isSelf = participantId === state.user?.uid;
-  if (!isSelf && !canManageRoom()) {
-    showMessage("Only the host can remove other participants.", "error");
+  if (!canManageRoom()) {
+    showMessage("Join the room before removing someone.", "error");
     return;
   }
 
@@ -435,8 +442,6 @@ async function leaveRoom(showFeedback = true) {
   const previousRoomId = state.roomId;
   const currentUid = state.user?.uid;
   const currentRoomKey = state.roomKey;
-  const shouldTransferHost = currentUid && state.roomData?.hostUid === currentUid;
-  const nextHostUid = shouldTransferHost ? getNextHostCandidate([currentUid]) : null;
 
   cleanupSubscriptions();
   stopPresenceLoops();
@@ -456,12 +461,6 @@ async function leaveRoom(showFeedback = true) {
 
   if (currentUid && currentRoomKey) {
     try {
-      if (shouldTransferHost && nextHostUid) {
-        await updateDoc(doc(db, "rooms", currentRoomKey), {
-          hostUid: nextHostUid,
-          updatedAt: Date.now()
-        });
-      }
       await deleteDoc(doc(db, "rooms", currentRoomKey, "participants", currentUid));
     } catch (error) {
       console.error(error);
@@ -544,52 +543,15 @@ async function cleanupStaleParticipants() {
 }
 
 function canManageRoom() {
-  return Boolean(state.user && state.roomData && state.roomData.hostUid === state.user.uid);
-}
-
-function getNextHostCandidate(excludedIds = []) {
-  const excluded = new Set(excludedIds);
-  return (
-    state.participants.find((participant) => !excluded.has(participant.id))?.id ??
-    null
+  return Boolean(
+    state.user &&
+    state.roomKey &&
+    state.participants.some((participant) => participant.id === state.user.uid)
   );
-}
-
-async function passHostToNextParticipant() {
-  if (!canManageRoom()) {
-    showMessage("Only the host can pass host controls.", "error");
-    return;
-  }
-
-  const nextHostUid = getNextHostCandidate([state.user.uid]);
-  if (!nextHostUid) {
-    showMessage("No other participant is available for host transfer.", "error");
-    return;
-  }
-
-  try {
-    await updateDoc(doc(db, "rooms", state.roomKey), {
-      hostUid: nextHostUid,
-      updatedAt: Date.now()
-    });
-    showMessage("Host controls passed to the next participant.", "success");
-  } catch (error) {
-    console.error(error);
-    showMessage(`Could not pass host controls: ${error.message}`, "error");
-  }
 }
 
 async function removeParticipantInternal(participantId, options = {}) {
   const participant = state.participants.find((entry) => entry.id === participantId);
-  const isRemovingHost = participantId === state.roomData?.hostUid;
-  const nextHostUid = isRemovingHost ? getNextHostCandidate([participantId]) : null;
-
-  if (isRemovingHost && nextHostUid) {
-    await updateDoc(doc(db, "rooms", state.roomKey), {
-      hostUid: nextHostUid,
-      updatedAt: Date.now()
-    });
-  }
 
   await deleteDoc(doc(db, "rooms", state.roomKey, "participants", participantId));
 
@@ -612,7 +574,7 @@ function render() {
   const currentUserId = state.user?.uid;
   const revealVotes = Boolean(state.roomData?.revealVotes);
   const numericVotes = participants
-    .map((participant) => Number(participant.vote))
+    .map((participant) => getVoteNumericValue(participant.vote))
     .filter((vote) => Number.isFinite(vote));
 
   const currentUser = participants.find((participant) => participant.id === currentUserId) ?? null;
@@ -625,12 +587,11 @@ function render() {
 
   participants.forEach((participant) => {
     const isSelf = participant.id === currentUserId;
-    const isHost = participant.id === state.roomData?.hostUid;
 
     let voteText = "-";
     let voteClass = "story-pill hidden";
     if (participant.vote !== null && participant.vote !== undefined && participant.vote !== "") {
-      voteText = revealVotes ? participant.vote : "Hidden";
+      voteText = revealVotes ? getVoteLabel(participant.vote) : "Hidden";
       voteClass = revealVotes ? "story-pill" : "story-pill hidden";
     }
 
@@ -653,9 +614,6 @@ function render() {
     row.querySelector(".name-line").textContent = participant.name || "Unnamed";
 
     const badges = row.querySelector(".name-meta");
-    if (isHost) {
-      badges.appendChild(createBadge("Host", "host"));
-    }
     if (isSelf) {
       badges.appendChild(createBadge("You"));
     }
@@ -679,7 +637,7 @@ function render() {
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.className = "mini-btn";
-      removeBtn.textContent = "Remove";
+      removeBtn.textContent = "Kick";
       removeBtn.addEventListener("click", () => removeParticipant(participant.id));
       controls.appendChild(removeBtn);
     }
@@ -694,22 +652,21 @@ function render() {
   refs.toggleRevealBtn.textContent = revealVotes ? "Hide Votes" : "Show Votes";
   refs.toggleRevealBtn.disabled = !canManageRoom();
   refs.clearVotesBtn.disabled = !canManageRoom();
-  refs.passHostBtn.disabled = !canManageRoom() || participants.length < 2;
 }
 
 function renderVoteDeck(currentUser) {
-  POINT_OPTIONS.forEach((option) => {
+  POINT_CARDS.forEach((option) => {
     const card = document.createElement("button");
     card.type = "button";
     card.className = "vote-card";
-    card.textContent = option;
+    card.textContent = option.label;
     card.disabled = !currentUser;
 
-    if (currentUser?.vote === option) {
+    if (currentUser?.vote === option.id) {
       card.classList.add("selected");
     }
 
-    card.addEventListener("click", () => setVote(option));
+    card.addEventListener("click", () => setVote(option.id));
     refs.voteDeck.appendChild(card);
   });
 }
@@ -724,7 +681,7 @@ function createBadge(text, className = "") {
 function updateBoardHeader() {
   const roomId = state.roomId || "-";
   refs.roomIdLabel.textContent = roomId;
-  refs.hostState.textContent = canManageRoom() ? "Host Controls Enabled" : "Participant View";
+  refs.hostState.textContent = canManageRoom() ? "Room Controls Enabled" : "Participant View";
   refs.roomSummary.textContent = state.roomId
     ? `Share this room as ${buildInviteUrl(state.roomId)}`
     : "Live Firestore room with hidden voting until reveal.";
@@ -737,7 +694,6 @@ function resetStats() {
   refs.averageValue.textContent = "-";
   refs.toggleRevealBtn.disabled = true;
   refs.clearVotesBtn.disabled = true;
-  refs.passHostBtn.disabled = true;
   refs.toggleRevealBtn.textContent = "Show Votes";
 }
 
@@ -859,6 +815,18 @@ function formatAverage(votes) {
 
   const average = votes.reduce((sum, vote) => sum + vote, 0) / votes.length;
   return String(findClosestStoryPoint(average));
+}
+
+function getVoteLabel(vote) {
+  return POINT_CARDS.find((card) => card.id === vote)?.label ?? vote ?? "-";
+}
+
+function getVoteNumericValue(vote) {
+  if (vote === null || vote === undefined || vote === "") {
+    return Number.NaN;
+  }
+
+  return POINT_CARDS.find((card) => card.id === vote)?.numericValue ?? Number(vote);
 }
 
 function findClosestStoryPoint(target) {
