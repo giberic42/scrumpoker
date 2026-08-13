@@ -337,6 +337,7 @@ async function enterRoom(roomId, roomKey, participantName) {
           return leftTime - rightTime || String(left.name).localeCompare(String(right.name));
         });
 
+      void ensureRoomHost();
       render();
     })
   );
@@ -602,6 +603,35 @@ async function cleanupStaleParticipants() {
   }
 }
 
+async function ensureRoomHost() {
+  if (!state.roomKey || !state.participants.length || !state.roomData || state.busy) {
+    return;
+  }
+
+  const currentHostUid = state.roomData.hostUid;
+  const hostStillPresent = currentHostUid
+    ? state.participants.some((participant) => participant.id === currentHostUid)
+    : false;
+
+  if (hostStillPresent) {
+    return;
+  }
+
+  const nextHostUid = state.participants[0]?.id;
+  if (!nextHostUid || currentHostUid === nextHostUid) {
+    return;
+  }
+
+  try {
+    await updateDoc(doc(db, "rooms", state.roomKey), {
+      hostUid: nextHostUid,
+      updatedAt: Date.now()
+    });
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 function canManageRoom() {
   return Boolean(state.user && state.roomData && state.roomData.hostUid === state.user.uid);
 }
@@ -636,21 +666,22 @@ async function removeParticipantInternal(participantId, options = {}) {
 }
 
 function render() {
-  const participants = state.participants;
+  const revealVotes = Boolean(state.roomData?.revealVotes);
+  const participants = getDisplayParticipants(state.participants, revealVotes);
   const subwayEnabled = Boolean(state.roomData?.subwayEnabled);
   refs.voteDeck.innerHTML = "";
   refs.participantsTableBody.innerHTML = "";
   refs.emptyState.hidden = participants.length > 0;
   refs.subwaySection.classList.toggle("show", subwayEnabled);
   refs.subwayFrame.src = subwayEnabled ? SUBWAY_VIDEO_EMBED_URL : "";
+  refs.toggleSubwayBtn.hidden = !canManageRoom();
 
   const currentUserId = state.user?.uid;
-  const revealVotes = Boolean(state.roomData?.revealVotes);
-  const numericVotes = participants
+  const numericVotes = state.participants
     .map((participant) => getVoteNumericValue(participant.vote))
     .filter((vote) => Number.isFinite(vote));
 
-  const currentUser = participants.find((participant) => participant.id === currentUserId) ?? null;
+  const currentUser = state.participants.find((participant) => participant.id === currentUserId) ?? null;
   renderVoteDeck(currentUser);
 
   if (!participants.length) {
@@ -750,6 +781,25 @@ function renderVoteDeck(currentUser) {
   });
 }
 
+function getDisplayParticipants(participants, revealVotes) {
+  if (!revealVotes) {
+    return participants;
+  }
+
+  return [...participants].sort((left, right) => {
+    const leftValue = getVoteSortValue(left.vote);
+    const rightValue = getVoteSortValue(right.vote);
+
+    if (leftValue !== rightValue) {
+      return leftValue - rightValue;
+    }
+
+    const leftTime = Number(left.joinedAt || 0);
+    const rightTime = Number(right.joinedAt || 0);
+    return leftTime - rightTime || String(left.name).localeCompare(String(right.name));
+  });
+}
+
 function createBadge(text, className = "") {
   const badge = document.createElement("span");
   badge.className = `badge ${className}`.trim();
@@ -772,6 +822,7 @@ function resetStats() {
   refs.revealState.textContent = "Hidden";
   refs.averageValue.textContent = "-";
   refs.toggleSubwayBtn.disabled = true;
+  refs.toggleSubwayBtn.hidden = true;
   refs.toggleSubwayBtn.textContent = "Show Subway Video";
   refs.subwaySection.classList.remove("show");
   refs.subwayFrame.src = "";
@@ -971,6 +1022,11 @@ function getVoteNumericValue(vote) {
   }
 
   return POINT_CARDS.find((card) => card.id === vote)?.numericValue ?? Number(vote);
+}
+
+function getVoteSortValue(vote) {
+  const numericValue = getVoteNumericValue(vote);
+  return Number.isFinite(numericValue) ? numericValue : Number.POSITIVE_INFINITY;
 }
 
 function findClosestStoryPoint(target) {
