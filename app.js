@@ -800,19 +800,10 @@ function render() {
 
   refs.participantCount.textContent = String(participants.length);
   refs.voteCount.textContent = String(votesSubmitted);
-  refs.revealState.textContent = revealVotes ? "Shown" : "Hidden";
+  refs.revealState.textContent = String(votesLeft);
   refs.averageValue.textContent = revealVotes ? formatAverage(numericVotes) : "Hidden";
-  refs.toggleRevealBtn.textContent = revealVotes
-    ? "Hide Votes"
-    : votesLeft > 0
-      ? `Votes Left ${votesLeft}`
-      : "Votes Left 0 · Reveal";
-  refs.toggleRevealBtn.className = "action-bubble";
-  if (revealVotes) {
-    refs.toggleRevealBtn.classList.add("revealed");
-  } else if (votesLeft === 0) {
-    refs.toggleRevealBtn.classList.add("ready");
-  }
+  refs.toggleRevealBtn.className = "primary-btn";
+  refs.toggleRevealBtn.textContent = revealVotes ? "Hide Votes" : "Show Votes";
   refs.toggleSubwayBtn.textContent = subwayEnabled ? "Hide Subway Video" : "Show Subway Video";
   refs.toggleSubwayBtn.disabled = !canManage;
   refs.toggleRevealBtn.disabled = !canManage;
@@ -874,7 +865,7 @@ function updateBoardHeader() {
 function resetStats() {
   refs.participantCount.textContent = "0";
   refs.voteCount.textContent = "0";
-  refs.revealState.textContent = "Hidden";
+  refs.revealState.textContent = "0";
   refs.averageValue.textContent = "-";
   refs.toggleSubwayBtn.disabled = true;
   refs.toggleSubwayBtn.hidden = true;
@@ -883,8 +874,8 @@ function resetStats() {
   refs.subwaySection.classList.remove("show");
   refs.subwayFrame.src = "";
   refs.toggleRevealBtn.disabled = true;
-  refs.toggleRevealBtn.className = "action-bubble";
-  refs.toggleRevealBtn.textContent = "Votes Left 0";
+  refs.toggleRevealBtn.className = "primary-btn";
+  refs.toggleRevealBtn.textContent = "Show Votes";
   refs.clearVotesBtn.disabled = true;
 }
 
