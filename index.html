@@ -374,6 +374,30 @@
       flex-wrap: wrap;
     }
 
+    .action-bubble {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 46px;
+      border-radius: 999px;
+      padding: 10px 16px;
+      border: 1px solid var(--line);
+      background: var(--teal-soft);
+      color: var(--teal);
+      font-weight: 700;
+      box-shadow: none;
+    }
+
+    .action-bubble.ready {
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+
+    .action-bubble.revealed {
+      background: rgba(95, 89, 128, 0.12);
+      color: var(--muted);
+    }
+
     .room-chip {
       display: inline-flex;
       align-items: center;
@@ -824,6 +848,8 @@
         </p>
         <div class="hero-actions">
           <button id="themeToggleBtn" class="secondary-btn" type="button">Switch to Dark Mode</button>
+          <button id="toggleSubwayBtn" class="secondary-btn" type="button" hidden>Show Subway Video</button>
+          <button id="leaveRoomBtn" class="danger-btn" type="button" hidden>Leave Room</button>
         </div>
       </div>
 
@@ -907,7 +933,7 @@
                 <div class="room-chip">Room <span id="roomIdLabel">-</span></div>
                 <div class="status-pill" id="hostState">Participant View</div>
               </div>
-              <button id="leaveRoomBtn" class="danger-btn" type="button">Leave Room</button>
+              <button id="toggleRevealBtn" class="action-bubble" type="button">Votes Left 0</button>
             </div>
             <div class="toolbar-subtitle" id="roomSummary">
               Hidden voting until reveal.
@@ -915,8 +941,6 @@
           </div>
           <div class="toolbar-actions-row">
             <button id="copyLinkBtn" class="secondary-btn" type="button">Copy Invite Link</button>
-            <button id="toggleSubwayBtn" class="secondary-btn" type="button">Show Subway Video</button>
-            <button id="toggleRevealBtn" class="primary-btn" type="button">Show Votes</button>
             <button id="clearVotesBtn" class="secondary-btn" type="button">Delete Votes</button>
           </div>
         </div>

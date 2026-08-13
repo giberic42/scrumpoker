@@ -710,12 +710,16 @@ function render() {
   const revealVotes = Boolean(state.roomData?.revealVotes);
   const participants = getDisplayParticipants(state.participants, revealVotes);
   const subwayEnabled = Boolean(state.roomData?.subwayEnabled);
+  const canManage = canManageRoom();
+  const votesSubmitted = state.participants.filter((participant) => participant.vote !== null && participant.vote !== "").length;
+  const votesLeft = Math.max(state.participants.length - votesSubmitted, 0);
   refs.voteDeck.innerHTML = "";
   refs.participantsTableBody.innerHTML = "";
   refs.emptyState.hidden = participants.length > 0;
   refs.subwaySection.classList.toggle("show", subwayEnabled);
   refs.subwayFrame.src = subwayEnabled ? SUBWAY_VIDEO_EMBED_URL : "";
-  refs.toggleSubwayBtn.hidden = !canManageRoom();
+  refs.toggleSubwayBtn.hidden = !canManage;
+  refs.leaveRoomBtn.hidden = !state.roomKey;
 
   const currentUserId = state.user?.uid;
   const numericVotes = state.participants
@@ -795,14 +799,24 @@ function render() {
   });
 
   refs.participantCount.textContent = String(participants.length);
-  refs.voteCount.textContent = String(participants.filter((participant) => participant.vote !== null && participant.vote !== "").length);
+  refs.voteCount.textContent = String(votesSubmitted);
   refs.revealState.textContent = revealVotes ? "Shown" : "Hidden";
   refs.averageValue.textContent = revealVotes ? formatAverage(numericVotes) : "Hidden";
-  refs.toggleRevealBtn.textContent = revealVotes ? "Hide Votes" : "Show Votes";
+  refs.toggleRevealBtn.textContent = revealVotes
+    ? "Hide Votes"
+    : votesLeft > 0
+      ? `Votes Left ${votesLeft}`
+      : "Votes Left 0 · Reveal";
+  refs.toggleRevealBtn.className = "action-bubble";
+  if (revealVotes) {
+    refs.toggleRevealBtn.classList.add("revealed");
+  } else if (votesLeft === 0) {
+    refs.toggleRevealBtn.classList.add("ready");
+  }
   refs.toggleSubwayBtn.textContent = subwayEnabled ? "Hide Subway Video" : "Show Subway Video";
-  refs.toggleSubwayBtn.disabled = !canManageRoom();
-  refs.toggleRevealBtn.disabled = !canManageRoom();
-  refs.clearVotesBtn.disabled = !canManageRoom();
+  refs.toggleSubwayBtn.disabled = !canManage;
+  refs.toggleRevealBtn.disabled = !canManage;
+  refs.clearVotesBtn.disabled = !canManage;
 }
 
 function renderVoteDeck(currentUser) {
@@ -864,12 +878,14 @@ function resetStats() {
   refs.averageValue.textContent = "-";
   refs.toggleSubwayBtn.disabled = true;
   refs.toggleSubwayBtn.hidden = true;
+  refs.leaveRoomBtn.hidden = true;
   refs.toggleSubwayBtn.textContent = "Show Subway Video";
   refs.subwaySection.classList.remove("show");
   refs.subwayFrame.src = "";
   refs.toggleRevealBtn.disabled = true;
+  refs.toggleRevealBtn.className = "action-bubble";
+  refs.toggleRevealBtn.textContent = "Votes Left 0";
   refs.clearVotesBtn.disabled = true;
-  refs.toggleRevealBtn.textContent = "Show Votes";
 }
 
 function applySavedTheme() {
