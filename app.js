@@ -252,6 +252,7 @@ async function enterOrCreateRoom() {
     }
 
     await upsertParticipant(roomKey, name);
+    await assignHostIfNeeded(roomRef, state.user.uid);
     await enterRoom(roomId, roomKey, name);
     saveSession({
       name,
@@ -322,6 +323,7 @@ async function enterRoom(roomId, roomKey, participantName) {
       }
 
       state.roomData = snapshot.data();
+      void ensureRoomHost();
       updateBoardHeader();
       render();
     })
@@ -623,13 +625,52 @@ async function ensureRoomHost() {
   }
 
   try {
-    await updateDoc(doc(db, "rooms", state.roomKey), {
-      hostUid: nextHostUid,
-      updatedAt: Date.now()
-    });
+    await assignHostIfNeeded(doc(db, "rooms", state.roomKey), nextHostUid);
   } catch (error) {
     console.error(error);
   }
+}
+
+async function assignHostIfNeeded(roomRef, preferredUid) {
+  const [roomSnapshot, participantsSnapshot] = await Promise.all([
+    getDoc(roomRef),
+    getDocs(collection(roomRef, "participants"))
+  ]);
+
+  const participants = participantsSnapshot.docs
+    .map((participant) => ({ id: participant.id, ...participant.data() }))
+    .sort((left, right) => {
+      const leftTime = Number(left.joinedAt || 0);
+      const rightTime = Number(right.joinedAt || 0);
+      return leftTime - rightTime || String(left.name).localeCompare(String(right.name));
+    });
+
+  if (!participants.length) {
+    return;
+  }
+
+  const roomData = roomSnapshot.data() || {};
+  const currentHostUid = roomData.hostUid;
+  const hostStillPresent = currentHostUid
+    ? participants.some((participant) => participant.id === currentHostUid)
+    : false;
+
+  const nextHostUid = participants.some((participant) => participant.id === preferredUid)
+    ? preferredUid
+    : participants[0].id;
+
+  if (hostStillPresent && currentHostUid === nextHostUid) {
+    return;
+  }
+
+  if (hostStillPresent && currentHostUid) {
+    return;
+  }
+
+  await updateDoc(roomRef, {
+    hostUid: nextHostUid,
+    updatedAt: Date.now()
+  });
 }
 
 function canManageRoom() {
@@ -891,6 +932,7 @@ async function resumePreviousSession() {
     }
 
     await upsertParticipant(roomKey, name);
+    await assignHostIfNeeded(roomRef, state.user.uid);
     await enterRoom(roomId, roomKey, name);
     saveSession({ name, roomId, passphrase });
     showMessage(
