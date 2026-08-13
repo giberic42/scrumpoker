@@ -9,6 +9,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
   onSnapshot,
   setDoc,
@@ -18,6 +19,7 @@ import {
 
 import { firebaseConfig } from "./firebase-config.js";
 
+const SUBWAY_VIDEO_EMBED_URL = "https://www.youtube.com/embed/i0M4ARe9v0Y?autoplay=1&mute=1&rel=0";
 const POINT_CARDS = [
   { id: "question", label: "?", numericValue: 0 },
   { id: "coffee", label: "\u2615", numericValue: 0 },
@@ -35,6 +37,7 @@ const POINT_CARDS = [
 const POINT_VALUES = [0, 1, 2, 3, 5, 8, 13, 20, 40, 100];
 const HEARTBEAT_INTERVAL_MS = 30000;
 const STALE_TIMEOUT_MS = 90000;
+const ROOM_EXPIRATION_MS = 8 * 60 * 60 * 1000;
 const CLEAR_ANIMATION_MS = 720;
 const PLACEHOLDER_VALUES = new Set([
   "REPLACE_ME",
@@ -51,6 +54,9 @@ const refs = {
   revealState: document.getElementById("revealState"),
   averageValue: document.getElementById("averageValue"),
   themeToggleBtn: document.getElementById("themeToggleBtn"),
+  subwaySection: document.getElementById("subwaySection"),
+  subwayFrame: document.getElementById("subwayFrame"),
+  toggleSubwayBtn: document.getElementById("toggleSubwayBtn"),
   message: document.getElementById("message"),
   setupSection: document.getElementById("setupSection"),
   boardSection: document.getElementById("boardSection"),
@@ -98,6 +104,7 @@ function bindUi() {
   refs.enterRoomBtn.addEventListener("click", () => enterOrCreateRoom());
   refs.prefillFromLinkBtn.addEventListener("click", () => prefillRoomIdFromUrl(true));
   refs.copyLinkBtn.addEventListener("click", () => copyInviteLink());
+  refs.toggleSubwayBtn.addEventListener("click", () => toggleSubwayMode());
   refs.toggleRevealBtn.addEventListener("click", () => toggleReveal());
   refs.clearVotesBtn.addEventListener("click", () => clearVotes());
   refs.leaveRoomBtn.addEventListener("click", () => leaveRoom());
@@ -217,13 +224,30 @@ async function enterOrCreateRoom() {
     const roomRef = doc(db, "rooms", roomKey);
     const roomSnapshot = await getDoc(roomRef);
 
+    const roomData = roomSnapshot.data();
+    const roomNeedsHost = roomSnapshot.exists() && !roomData?.hostUid;
+    const roomExpired = roomSnapshot.exists() && isRoomExpired(roomData);
+
     if (!roomSnapshot.exists()) {
       const now = Date.now();
       await setDoc(roomRef, {
         roomId,
         revealVotes: false,
+        subwayEnabled: false,
+        hostUid: state.user.uid,
         createdAt: now,
         updatedAt: now
+      });
+    } else if (roomExpired) {
+      if (!confirmExpiredRoomReset(roomId)) {
+        showMessage(`Room "${roomId}" was not reset.`, "error");
+        return;
+      }
+      await resetRoom(roomRef, roomId);
+    } else if (roomNeedsHost) {
+      await updateDoc(roomRef, {
+        hostUid: state.user.uid,
+        updatedAt: Date.now()
       });
     }
 
@@ -235,9 +259,13 @@ async function enterOrCreateRoom() {
       passphrase
     });
     showMessage(
-      roomSnapshot.exists()
-        ? `Joined room "${roomId}".`
-        : `Created room "${roomId}".`,
+      !roomSnapshot.exists()
+        ? `Created room "${roomId}".`
+        : roomExpired
+          ? `Reset expired room "${roomId}" and joined as host.`
+          : roomNeedsHost
+            ? `Joined room "${roomId}" and restored host controls.`
+          : `Joined room "${roomId}".`,
       "success"
     );
   } catch (error) {
@@ -361,7 +389,7 @@ async function setVote(vote) {
 
 async function toggleReveal() {
   if (!canManageRoom()) {
-    showMessage("Join the room before changing reveal state.", "error");
+    showMessage("Only the host can change reveal state.", "error");
     return;
   }
 
@@ -376,9 +404,31 @@ async function toggleReveal() {
   }
 }
 
+async function toggleSubwayMode() {
+  if (!canManageRoom()) {
+    showMessage("Only the host can change the subway video setting.", "error");
+    return;
+  }
+
+  try {
+    const enabled = !Boolean(state.roomData?.subwayEnabled);
+    await updateDoc(doc(db, "rooms", state.roomKey), {
+      subwayEnabled: enabled,
+      updatedAt: Date.now()
+    });
+    showMessage(
+      enabled ? "Subway video is visible for this room." : "Subway video is hidden for this room.",
+      "success"
+    );
+  } catch (error) {
+    console.error(error);
+    showMessage(`Could not update the subway setting: ${error.message}`, "error");
+  }
+}
+
 async function clearVotes() {
   if (!canManageRoom()) {
-    showMessage("Join the room before clearing votes.", "error");
+    showMessage("Only the host can clear votes.", "error");
     return;
   }
 
@@ -428,7 +478,7 @@ async function removeParticipant(participantId) {
   }
 
   if (!canManageRoom()) {
-    showMessage("Join the room before removing someone.", "error");
+    showMessage("Only the host can remove someone.", "error");
     return;
   }
 
@@ -444,6 +494,8 @@ async function leaveRoom(showFeedback = true) {
   const previousRoomId = state.roomId;
   const currentUid = state.user?.uid;
   const currentRoomKey = state.roomKey;
+  const shouldTransferHost = currentUid && state.roomData?.hostUid === currentUid;
+  const nextHostUid = shouldTransferHost ? getNextHostCandidate([currentUid]) : null;
 
   cleanupSubscriptions();
   stopPresenceLoops();
@@ -463,6 +515,12 @@ async function leaveRoom(showFeedback = true) {
 
   if (currentUid && currentRoomKey) {
     try {
+      if (shouldTransferHost && nextHostUid) {
+        await updateDoc(doc(db, "rooms", currentRoomKey), {
+          hostUid: nextHostUid,
+          updatedAt: Date.now()
+        });
+      }
       await deleteDoc(doc(db, "rooms", currentRoomKey, "participants", currentUid));
     } catch (error) {
       console.error(error);
@@ -545,15 +603,25 @@ async function cleanupStaleParticipants() {
 }
 
 function canManageRoom() {
-  return Boolean(
-    state.user &&
-    state.roomKey &&
-    state.participants.some((participant) => participant.id === state.user.uid)
-  );
+  return Boolean(state.user && state.roomData && state.roomData.hostUid === state.user.uid);
+}
+
+function getNextHostCandidate(excludedIds = []) {
+  const excluded = new Set(excludedIds);
+  return state.participants.find((participant) => !excluded.has(participant.id))?.id ?? null;
 }
 
 async function removeParticipantInternal(participantId, options = {}) {
   const participant = state.participants.find((entry) => entry.id === participantId);
+  const isRemovingHost = participantId === state.roomData?.hostUid;
+  const nextHostUid = isRemovingHost ? getNextHostCandidate([participantId]) : null;
+
+  if (isRemovingHost && nextHostUid) {
+    await updateDoc(doc(db, "rooms", state.roomKey), {
+      hostUid: nextHostUid,
+      updatedAt: Date.now()
+    });
+  }
 
   await deleteDoc(doc(db, "rooms", state.roomKey, "participants", participantId));
 
@@ -569,9 +637,12 @@ async function removeParticipantInternal(participantId, options = {}) {
 
 function render() {
   const participants = state.participants;
+  const subwayEnabled = Boolean(state.roomData?.subwayEnabled);
   refs.voteDeck.innerHTML = "";
   refs.participantsTableBody.innerHTML = "";
   refs.emptyState.hidden = participants.length > 0;
+  refs.subwaySection.classList.toggle("show", subwayEnabled);
+  refs.subwayFrame.src = subwayEnabled ? SUBWAY_VIDEO_EMBED_URL : "";
 
   const currentUserId = state.user?.uid;
   const revealVotes = Boolean(state.roomData?.revealVotes);
@@ -589,6 +660,7 @@ function render() {
 
   participants.forEach((participant) => {
     const isSelf = participant.id === currentUserId;
+    const isHost = participant.id === state.roomData?.hostUid;
 
     let voteText = "-";
     let voteClass = "story-pill hidden";
@@ -616,6 +688,9 @@ function render() {
     row.querySelector(".name-line").textContent = participant.name || "Unnamed";
 
     const badges = row.querySelector(".name-meta");
+    if (isHost) {
+      badges.appendChild(createBadge("Host", "host"));
+    }
     if (isSelf) {
       badges.appendChild(createBadge("You"));
     }
@@ -652,6 +727,8 @@ function render() {
   refs.revealState.textContent = revealVotes ? "Shown" : "Hidden";
   refs.averageValue.textContent = revealVotes ? formatAverage(numericVotes) : "Hidden";
   refs.toggleRevealBtn.textContent = revealVotes ? "Hide Votes" : "Show Votes";
+  refs.toggleSubwayBtn.textContent = subwayEnabled ? "Hide Subway Video" : "Show Subway Video";
+  refs.toggleSubwayBtn.disabled = !canManageRoom();
   refs.toggleRevealBtn.disabled = !canManageRoom();
   refs.clearVotesBtn.disabled = !canManageRoom();
 }
@@ -683,7 +760,7 @@ function createBadge(text, className = "") {
 function updateBoardHeader() {
   const roomId = state.roomId || "-";
   refs.roomIdLabel.textContent = roomId;
-  refs.hostState.textContent = canManageRoom() ? "Room Controls Enabled" : "Participant View";
+  refs.hostState.textContent = canManageRoom() ? "Host Controls Enabled" : "Participant View";
   refs.roomSummary.textContent = state.roomId
     ? `Share this room as ${buildInviteUrl(state.roomId)}`
     : "Live Firestore room with hidden voting until reveal.";
@@ -694,6 +771,10 @@ function resetStats() {
   refs.voteCount.textContent = "0";
   refs.revealState.textContent = "Hidden";
   refs.averageValue.textContent = "-";
+  refs.toggleSubwayBtn.disabled = true;
+  refs.toggleSubwayBtn.textContent = "Show Subway Video";
+  refs.subwaySection.classList.remove("show");
+  refs.subwayFrame.src = "";
   refs.toggleRevealBtn.disabled = true;
   refs.clearVotesBtn.disabled = true;
   refs.toggleRevealBtn.textContent = "Show Votes";
@@ -740,10 +821,35 @@ async function resumePreviousSession() {
       return;
     }
 
+    const roomData = roomSnapshot.data();
+    const roomNeedsHost = !roomData?.hostUid;
+    const roomExpired = isRoomExpired(roomData);
+
+    if (roomExpired) {
+      if (!confirmExpiredRoomReset(roomId)) {
+        clearSavedSession();
+        showMessage(`Room "${roomId}" needs a host reset before rejoining.`, "error");
+        return;
+      }
+      await resetRoom(roomRef, roomId);
+    } else if (roomNeedsHost) {
+      await updateDoc(roomRef, {
+        hostUid: state.user.uid,
+        updatedAt: Date.now()
+      });
+    }
+
     await upsertParticipant(roomKey, name);
     await enterRoom(roomId, roomKey, name);
     saveSession({ name, roomId, passphrase });
-    showMessage(`Rejoined room "${roomId}".`, "success");
+    showMessage(
+      roomExpired
+        ? `Reset expired room "${roomId}" and rejoined as host.`
+        : roomNeedsHost
+          ? `Rejoined room "${roomId}" and restored host controls.`
+        : `Rejoined room "${roomId}".`,
+      "success"
+    );
   } catch (error) {
     console.error(error);
     clearSavedSession();
@@ -808,6 +914,42 @@ function normalizePassphrase(value) {
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isRoomExpired(roomData) {
+  const createdAt = Number(roomData?.createdAt || 0);
+  return createdAt > 0 && Date.now() - createdAt >= ROOM_EXPIRATION_MS;
+}
+
+function confirmExpiredRoomReset(roomId) {
+  return window.confirm(
+    `Room "${roomId}" is older than 8 hours.\n\nContinue to reset the room, remove old participants, and become the new host?`
+  );
+}
+
+async function resetRoom(roomRef, roomId) {
+  const participantsSnapshot = await getDocs(collection(roomRef, "participants"));
+  const batch = writeBatch(db);
+  const now = Date.now();
+
+  participantsSnapshot.forEach((participantDoc) => {
+    batch.delete(participantDoc.ref);
+  });
+
+  batch.set(
+    roomRef,
+    {
+      roomId,
+      revealVotes: false,
+      subwayEnabled: false,
+      hostUid: state.user.uid,
+      createdAt: now,
+      updatedAt: now
+    },
+    { merge: true }
+  );
+
+  await batch.commit();
 }
 
 function formatAverage(votes) {

@@ -738,6 +738,45 @@
       line-height: 1.5;
     }
 
+    .subway-shell {
+      margin-top: 18px;
+      padding: 16px 18px 18px;
+      display: none;
+    }
+
+    .subway-shell.show {
+      display: block;
+    }
+
+    .subway-title {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .subway-copy {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .subway-frame-wrap {
+      margin-top: 12px;
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(18, 68, 206, 0.06), rgba(95, 89, 128, 0.12)),
+        var(--panel-strong);
+    }
+
+    .subway-frame {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: 0;
+    }
+
     code {
       background: rgba(47, 37, 24, 0.06);
       padding: 2px 6px;
@@ -876,6 +915,7 @@
           </div>
           <div class="toolbar-actions-row">
             <button id="copyLinkBtn" class="secondary-btn" type="button">Copy Invite Link</button>
+            <button id="toggleSubwayBtn" class="secondary-btn" type="button">Show Subway Video</button>
             <button id="toggleRevealBtn" class="primary-btn" type="button">Show Votes</button>
             <button id="clearVotesBtn" class="secondary-btn" type="button">Delete Votes</button>
           </div>
@@ -913,6 +953,22 @@
 
       <div class="footnote">
         GitHub Pages + Firebase.
+      </div>
+    </section>
+
+    <section id="subwaySection" class="card subway-shell" aria-live="polite">
+      <h3 class="subway-title">Subway Surfers Break</h3>
+      <p class="subway-copy">Host-controlled video for the room.</p>
+      <div class="subway-frame-wrap">
+        <iframe
+          id="subwayFrame"
+          class="subway-frame"
+          title="Subway Surfers video player"
+          src=""
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allowfullscreen
+        ></iframe>
       </div>
     </section>
   </main>
