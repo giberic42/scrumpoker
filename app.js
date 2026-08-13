@@ -11,9 +11,12 @@ import {
   getDoc,
   getDocs,
   getFirestore,
+  limit,
   onSnapshot,
+  query,
   setDoc,
   updateDoc,
+  where,
   writeBatch
 } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
 
@@ -38,6 +41,7 @@ const POINT_VALUES = [0, 1, 2, 3, 5, 8, 13, 20, 40, 100];
 const HEARTBEAT_INTERVAL_MS = 30000;
 const STALE_TIMEOUT_MS = 90000;
 const ROOM_EXPIRATION_MS = 8 * 60 * 60 * 1000;
+const STALE_ROOM_CLEANUP_LIMIT = 10;
 const CLEAR_ANIMATION_MS = 720;
 const PLACEHOLDER_VALUES = new Set([
   "REPLACE_ME",
@@ -229,6 +233,7 @@ async function enterOrCreateRoom() {
     const roomExpired = roomSnapshot.exists() && isRoomExpired(roomData);
 
     if (!roomSnapshot.exists()) {
+      await cleanupExpiredRooms();
       const now = Date.now();
       await setDoc(roomRef, {
         roomId,
@@ -1050,6 +1055,36 @@ async function resetRoom(roomRef, roomId) {
   );
 
   await batch.commit();
+}
+
+async function cleanupExpiredRooms() {
+  if (!db) {
+    return;
+  }
+
+  const expirationCutoff = Date.now() - ROOM_EXPIRATION_MS;
+  const staleRoomsQuery = query(
+    collection(db, "rooms"),
+    where("createdAt", "<=", expirationCutoff),
+    limit(STALE_ROOM_CLEANUP_LIMIT)
+  );
+
+  const staleRoomsSnapshot = await getDocs(staleRoomsQuery);
+  if (staleRoomsSnapshot.empty) {
+    return;
+  }
+
+  for (const roomDoc of staleRoomsSnapshot.docs) {
+    const participantsSnapshot = await getDocs(collection(roomDoc.ref, "participants"));
+    const batch = writeBatch(db);
+
+    participantsSnapshot.forEach((participantDoc) => {
+      batch.delete(participantDoc.ref);
+    });
+    batch.delete(roomDoc.ref);
+
+    await batch.commit();
+  }
 }
 
 function formatAverage(votes) {
