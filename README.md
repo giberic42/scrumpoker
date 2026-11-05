@@ -8,7 +8,7 @@ Static scrum poker app for GitHub Pages with Firebase Auth and Cloud Firestore f
 - Protect access with a shared session passphrase
 - Let each teammate set their own story point vote
 - Hide votes until the host reveals them
-- Show a live average from all submitted votes
+- Show a consensus-weighted recommendation after reveal. Each point value gets weight equal to its vote count squared, and the weighted median rounds to the nearest card. `?` and coffee count as `0`.
 - Let the host clear votes for the next round
 
 ## Files

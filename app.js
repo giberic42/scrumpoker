@@ -806,7 +806,7 @@ function render() {
   refs.participantCount.textContent = String(participants.length);
   refs.voteCount.textContent = String(votesSubmitted);
   refs.revealState.textContent = String(votesLeft);
-  refs.averageValue.textContent = revealVotes ? formatAverage(numericVotes) : "Hidden";
+  refs.averageValue.textContent = revealVotes ? formatConsensusEstimate(numericVotes) : "Hidden";
   refs.toggleRevealBtn.className = "primary-btn";
   refs.toggleRevealBtn.textContent = revealVotes ? "Hide Votes" : "Show Votes";
   refs.toggleSubwayBtn.textContent = subwayEnabled ? "Hide Subway Video" : "Show Subway Video";
@@ -1087,13 +1087,30 @@ async function cleanupExpiredRooms() {
   }
 }
 
-function formatAverage(votes) {
+function formatConsensusEstimate(votes) {
   if (!votes.length) {
     return "-";
   }
 
-  const average = votes.reduce((sum, vote) => sum + vote, 0) / votes.length;
-  return String(findClosestStoryPoint(average));
+  const counts = new Map();
+  for (const vote of votes) {
+    counts.set(vote, (counts.get(vote) ?? 0) + 1);
+  }
+
+  // Each vote gets the weight of its group, so an estimate with n votes has weight n squared.
+  const groups = [...counts.entries()].sort(([left], [right]) => left - right);
+  const totalWeight = groups.reduce((sum, [, count]) => sum + count ** 2, 0);
+  let cumulativeWeight = 0;
+
+  for (const [index, [value, count]] of groups.entries()) {
+    cumulativeWeight += count ** 2;
+    if (cumulativeWeight * 2 >= totalWeight) {
+      const estimate = cumulativeWeight * 2 === totalWeight
+        ? (value + groups[index + 1][0]) / 2
+        : value;
+      return String(findClosestStoryPoint(estimate));
+    }
+  }
 }
 
 function getVoteLabel(vote) {
@@ -1122,7 +1139,7 @@ function findClosestStoryPoint(target) {
       return candidate;
     }
 
-    // If the mean falls directly between two cards, bias upward.
+    // If the estimate falls directly between two cards, bias upward.
     if (candidateDistance === closestDistance && candidate > closest) {
       return candidate;
     }
